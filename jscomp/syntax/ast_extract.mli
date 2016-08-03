@@ -47,7 +47,7 @@ type  info =
 *)
 
 val prepare :
-  (string, ast) Hashtbl.t -> string Queue.t * (string, string) Hashtbl.t  
+  (string, info) Hashtbl.t -> string Queue.t * (string, string) Hashtbl.t  
 
 
 

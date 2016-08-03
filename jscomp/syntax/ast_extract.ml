@@ -26,15 +26,6 @@
 
 module String_set = Depend.StringSet
 
-let read_parse_and_extract ast extract_function : String_set.t =
-  Depend.free_structure_names := String_set.empty;
-  (let bound_vars = String_set.empty in
-  List.iter
-    (fun modname  ->
-      Depend.open_module bound_vars (Longident.Lident modname))
-    (!Clflags.open_modules);
-  extract_function bound_vars ast;
-  !Depend.free_structure_names)
 
 
 
@@ -43,6 +34,22 @@ type ast =
   | Ml of Parsetree.structure * string 
   | Mli of Parsetree.signature * string 
 
+type _ kind =
+  | Ml_kind : Parsetree.structure kind
+  | Mli_kind : Parsetree.signature kind
+        
+let read_parse_and_extract (type t) (k : t kind) (ast : t) : String_set.t =
+  Depend.free_structure_names := String_set.empty;
+  let bound_vars = String_set.empty in
+  List.iter
+    (fun modname  ->
+       Depend.open_module bound_vars (Longident.Lident modname))
+    (!Clflags.open_modules);
+  (match k with
+   | Ml_kind  -> Depend.add_implementation bound_vars ast
+   | Mli_kind  -> Depend.add_signature bound_vars ast  ); 
+  !Depend.free_structure_names
+
 type  info = 
   { source_file : string ; 
     ast : ast;
@@ -50,9 +57,6 @@ type  info =
   }
 
 
-let module_name_of_file file =
-    String.capitalize 
-      (Filename.chop_extension @@ Filename.basename file)  
 
 
 let merge (files : (info * String_set.t) list )  =
@@ -126,14 +130,14 @@ let sort_files_by_dependencies  files
 
 let prepare  ast_table = 
   let file_dependencies 
-      source_file ast  acc =
+      source_file info  acc =
     let extracted_deps =
-      read_parse_and_extract ast 
-        (  match ast with
-           | Ml (ast,_) -> fun set _ ->  Depend.add_implementation set ast 
-           | Mli (ast,_) -> fun set _ ->   Depend.add_signature set ast ) in
-    ({source_file ; ast ; module_name = module_name_of_file source_file },
-     extracted_deps) :: acc  in
+      match info.ast with
+      | Ml (ast, _)->       
+        read_parse_and_extract Ml_kind  ast
+      | Mli (ast, _) -> read_parse_and_extract Mli_kind ast
+    in
+    (info, extracted_deps) :: acc  in
   let files = Hashtbl.fold file_dependencies ast_table []  in
   sort_files_by_dependencies  files 
 

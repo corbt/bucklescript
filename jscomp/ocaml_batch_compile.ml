@@ -23,23 +23,28 @@
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA. *)
 
 
+let module_name_of_file file =
+    String.capitalize 
+      (Filename.chop_extension @@ Filename.basename file)  
+
 let batch_compile ppf files =
   if files <> [] then 
     begin 
       Compenv.readenv ppf Before_compile; 
       Compmisc.init_path  false;
-      let batch_files  : (string, Ast_extract.ast) Hashtbl.t =
-        Hashtbl.create 31 in 
-      files |> List.iter begin fun name -> 
-        match Ocaml_parse.check_suffix name with 
-        | `Ml, opref -> 
-          Hashtbl.add batch_files 
-            name
-            (Ml (Ocaml_parse.parse_implementation ppf name, opref) )
-        | `Mli, opref -> 
-          Hashtbl.add batch_files name
-            (Mli (Ocaml_parse.parse_interface ppf name, opref))
-
+      let batch_files = Hashtbl.create 31 in 
+      files |> List.iter begin fun name ->
+        Hashtbl.add batch_files name
+          ({ source_file = name ; 
+            ast =
+              (match Ocaml_parse.check_suffix name with 
+               | `Ml, opref -> 
+                 Ast_extract.Ml (Ocaml_parse.parse_implementation ppf name, opref) 
+               | `Mli, opref -> 
+                 Mli (Ocaml_parse.parse_interface ppf name, opref)) ;
+            module_name = module_name_of_file name; 
+          } : Ast_extract.info)
+                                     
       end;
       let stack, mapping = Ast_extract.prepare batch_files in 
       stack |> Queue.iter (fun modname -> 
@@ -48,36 +53,29 @@ let batch_compile ppf files =
           | [sourcefile] -> 
             begin match Hashtbl.find batch_files sourcefile with
               | exception _ -> assert false 
-              | Ml (ast,opref) 
+              | {ast = Ml (ast,opref) ; } 
                 ->
                 Js_implementation.after_parsing_impl ppf sourcefile 
                   opref ast 
-              | Mli (ast,opref)  
+              | {ast = Mli (ast,opref) ; }  
                 ->
                 Js_implementation.after_parsing_sig ppf sourcefile 
                   opref ast 
             end
           | [sourcefile1;sourcefile2] 
             -> (* TODO: check duplicated names *)
-            begin match Hashtbl.find batch_files sourcefile1 with 
+            begin match
+                Hashtbl.find batch_files sourcefile1,
+                Hashtbl.find batch_files sourcefile2                
+              with 
               | exception _ -> assert false 
-              | Mli (ast,opref) -> 
+              | { ast = Mli (ast,opref) ; }, { ast = Ml (ast2,opref2)}
+              | { ast = Ml (ast2,opref2)}, { ast = Mli (ast,opref)}                   
+                -> 
                 Js_implementation.after_parsing_sig ppf sourcefile1 opref ast ;
-                begin match Hashtbl.find batch_files sourcefile2 with 
-                  | Ml (ast,opref) -> 
-                    Js_implementation.after_parsing_impl ppf sourcefile2 
-                      opref ast ;
-                  | _ -> assert false 
-                end
-              | Ml (ast0,opref0) -> 
-                begin match Hashtbl.find batch_files sourcefile2 with 
-                  | Mli (ast,opref) -> 
-                    Js_implementation.after_parsing_sig ppf sourcefile2 opref ast ;
-                    Js_implementation.after_parsing_impl ppf sourcefile1 
-                      opref0 ast0 ;
-
-                  | _ -> assert false
-                end
+                Js_implementation.after_parsing_impl ppf sourcefile2 
+                      opref2 ast2 
+              | _ -> assert false
             end
           | _ -> assert false 
         )
